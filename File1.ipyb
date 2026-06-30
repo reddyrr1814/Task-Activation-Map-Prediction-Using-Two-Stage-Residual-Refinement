@@ -1,0 +1,183 @@
+import os
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.svm import SVR
+from sklearn.linear_model import LinearRegression, Ridge, Lasso, ElasticNet
+from sklearn.ensemble import GradientBoostingRegressor
+from xgboost import XGBRegressor
+import pickle
+# ==========================================================
+# Paths
+# ==========================================================
+base_path_fmri = r'E:\brain_gnn_outputs\fingerprints'
+base_path_actmap = r'E:\task_contrasts\RELATIONAL\RELATIONAL_COPE_1_mapped_data'
+
+items = filtered_array
+
+all_actual = []
+all_predictions = []
+
+
+# ==========================================================
+# Load .npy data
+# ==========================================================
+def load_data(base_path, item, class_num):
+    """
+    Load input fingerprint .npy file
+    Example:
+    E:\brain_gnn_outputs\fingerprints\subject_1\class_0.npy
+    """
+    npy_file_path = os.path.join(
+        base_path,
+        item,
+        f'class_{class_num}.npy'
+    )
+
+    if os.path.exists(npy_file_path):
+        return np.load(npy_file_path)
+    else:
+        print(f'File not found for {item}: {npy_file_path}')
+        return None
+
+
+def load_data_out(base_path, item, class_num):
+    pickle_file_path = os.path.join(base_path, item, f'class_{class_num}.0.pkl')
+    if os.path.exists(pickle_file_path):
+        with open(pickle_file_path, 'rb') as file:
+            data = pickle.load(file)
+            return data
+    else:
+        print(f'File not found for {item}: {pickle_file_path}')
+        return None
+
+
+# ==========================================================
+# Process one class
+# ==========================================================
+def process_class_data(class_num):
+
+    data_list = []
+    data_list_out = []
+
+    for item in items:
+
+        data = load_data(base_path_fmri, item, class_num)
+        data_out = load_data_out(base_path_actmap, item, class_num)
+
+        if data is not None and data_out is not None:
+            data_list.append(data)
+            data_list_out.append(data_out)
+
+    if not data_list or not data_list_out:
+        print(f'No data loaded for class_{class_num}.npy')
+        return []
+
+    stacked_data = np.stack(data_list)
+    stacked_data_out = np.stack(data_list_out)
+    print(stacked_data_out.shape)
+    print(stacked_data.shape)
+    number_of_grayordinates = stacked_data_out.shape[1]
+    print(number_of_grayordinates)
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        stacked_data,
+        stacked_data_out,
+        test_size=0.2,
+        random_state=42
+    )
+
+    print("Train Shape:", X_train.shape)
+
+    correlations = []
+
+    for j in range(number_of_grayordinates):
+
+        X_T = X_train[:, j, :]
+        X_TE = X_test[:, j, :]
+
+        Y_T = y_train[:, j]
+        Y_TE = y_test[:, j]
+
+        all_actual.append(Y_TE)
+
+        # ==================================================
+        # Regressor
+        # ==================================================
+        #reg = SVR(kernel='rbf', C=1.0, epsilon=0.1)
+
+        # reg = LinearRegression()
+        #reg = Lasso(alpha=1.0)
+        reg = Ridge(alpha=5.0)
+        # reg = XGBRegressor(
+        #     n_estimators=100,
+        #     learning_rate=0.1,
+        #     max_depth=4,
+        #     subsample=0.8,
+        #     colsample_bytree=0.8,
+        #     random_state=42
+        # )
+        # reg = ElasticNet(alpha=1.0, l1_ratio=0.5, random_state=42)
+        # reg = GradientBoostingRegressor(
+        #     n_estimators=100,
+        #     learning_rate=0.1,
+        #     random_state=42
+        # )
+
+        reg.fit(X_T, Y_T)
+
+        pred = reg.predict(X_TE)
+
+        all_predictions.append(pred)
+
+        corr_matrix = np.corrcoef(pred, Y_TE)
+        correlation = abs(corr_matrix[0, 1])
+
+        print(
+            f'Correlation for {j} '
+            f'for parcel {class_num}: {correlation}'
+        )
+
+        correlations.append(correlation)
+
+    return correlations
+
+
+# ==========================================================
+# Run all classes
+# ==========================================================
+all_correlations = []
+all_predictions = []
+all_actual = []
+
+for class_num in range(360):
+
+    correlations = process_class_data(class_num)
+
+    all_correlations.append(correlations)
+
+    print(
+        f'Processed class_{class_num}.npy '
+        f'with correlations: {correlations}'
+    )
+
+print('All correlations computed.')
+
+
+# ==========================================================
+# Final evaluation
+# ==========================================================
+gt = np.stack(all_actual)
+predi = np.stack(all_predictions)
+
+print("GT Shape:", gt.shape)
+print("Prediction Shape:", predi.shape)
+
+r = []
+
+for i in range(68):
+    r.append(np.corrcoef(gt[:, i], predi[:, i])[0, 1])
+
+print(r)
+print("Max:", max(r))
+print("Min:", min(r))
+print("Average:", np.average(r))
